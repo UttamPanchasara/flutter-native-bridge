@@ -1,0 +1,36 @@
+name: flutter_native_bridge
+description: "Zero-boilerplate bridge between Flutter and native Android. Call native Kotlin methods from Dart with minimal setup - just annotate and call!"
+version: 1.0.0
+homepage: https://github.com/example/flutter_native_bridge
+repository: https://github.com/example/flutter_native_bridge
+issue_tracker: https://github.com/example/flutter_native_bridge/issues
+
+topics:
+  - native
+  - bridge
+  - android
+  - method-channel
+  - code-generation
+
+environment:
+  sdk: ^3.0.0
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+executables:
+  flutter_native_bridge: generate
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.nativebridge
+        pluginClass: FlutterNativeBridgePlugin
