@@ -1,9 +1,10 @@
 # Flutter Native Bridge
 
-Zero-boilerplate bridge between Flutter and native Android. Call native Kotlin methods from Dart with minimal setup.
+Zero-boilerplate bridge between Flutter and native platforms. Call native Kotlin/Swift methods from Dart with minimal setup.
 
 ## Features
 
+- **Cross-Platform** - Supports both Android (Kotlin) and iOS (Swift)
 - **Minimal Setup** - Just add annotations and one line of registration
 - **Auto-Discovery** - Automatically finds and registers annotated classes
 - **Type-Safe** - Generated Dart code with full type support
@@ -22,7 +23,9 @@ dependencies:
 
 ## Quick Start
 
-### 1. Annotate Your Kotlin Code
+### Android (Kotlin)
+
+#### 1. Annotate Your Kotlin Code
 
 ```kotlin
 // Option A: Expose all methods with @NativeBridge
@@ -42,9 +45,11 @@ class MainActivity : FlutterActivity() {
 }
 ```
 
-### 2. Register in MainActivity
+#### 2. Register in MainActivity
 
 ```kotlin
+import io.nativebridge.FlutterNativeBridge
+
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -53,26 +58,74 @@ class MainActivity : FlutterActivity() {
 }
 ```
 
-### 3. Generate Dart Code
+### iOS (Swift)
+
+#### 1. Create Your Swift Classes
+
+```swift
+import Foundation
+
+// Inherit from NSObject and use @objc to expose methods
+class DeviceService: NSObject {
+    @objc func getModel() -> String {
+        return UIDevice.current.model
+    }
+
+    @objc func getVersion() -> String {
+        return UIDevice.current.systemVersion
+    }
+}
+```
+
+#### 2. Register in AppDelegate
+
+```swift
+import flutter_native_bridge
+
+@UIApplicationMain
+@objc class AppDelegate: FlutterAppDelegate {
+    override func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        GeneratedPluginRegistrant.register(with: self)
+
+        // Register your native classes
+        FlutterNativeBridge.register(DeviceService())
+
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+}
+```
+
+### Generate Dart Code
 
 ```bash
 dart run flutter_native_bridge:generate
 ```
 
-This creates `lib/native_bridge.g.dart` with typed Dart classes.
+This scans both Android and iOS source files and creates `lib/native_bridge.g.dart`.
 
-### 4. Use in Dart
+### Use in Dart
 
 ```dart
 import 'native_bridge.g.dart';
 
-// Type-safe calls with autocomplete!
+// Type-safe calls with autocomplete - works on both platforms!
 final model = await DeviceService.getModel();
 final version = await DeviceService.getVersion();
-final greeting = await MainActivity.greet('Flutter');
 ```
 
-## Annotations
+## Platform Comparison
+
+| Feature | Android | iOS |
+|---------|---------|-----|
+| Class annotation | `@NativeBridge` | Inherit `NSObject` |
+| Method annotation | `@NativeFunction` | `@objc` |
+| Exclude method | `@NativeIgnore` | Don't add `@objc` |
+| Registration | `FlutterNativeBridge.register(this)` | `FlutterNativeBridge.register(obj)` |
+
+## Android Annotations
 
 | Annotation | Target | Description |
 |------------|--------|-------------|
@@ -80,9 +133,15 @@ final greeting = await MainActivity.greet('Flutter');
 | `@NativeFunction` | Method | Exposes a single method to Flutter |
 | `@NativeIgnore` | Method | Excludes a method (use with `@NativeBridge`) |
 
-## Auto-Discovery
+## iOS Requirements
 
-When you call `FlutterNativeBridge.register(this)`, the plugin automatically:
+- Classes must inherit from `NSObject`
+- Methods must be marked with `@objc`
+- Return types must be Objective-C compatible
+
+## Auto-Discovery (Android)
+
+When you call `FlutterNativeBridge.register(this)` on Android, the plugin automatically:
 
 1. Registers the activity if it has `@NativeFunction` methods
 2. Scans your package for classes with `@NativeBridge` or `@NativeFunction`
@@ -90,30 +149,6 @@ When you call `FlutterNativeBridge.register(this)`, the plugin automatically:
    - `Activity` parameter
    - `Context` parameter
    - No-arg constructor
-
-## Constructor Support
-
-Classes can have different constructors:
-
-```kotlin
-// No-arg constructor
-@NativeBridge
-class SimpleService {
-    fun getData(): String = "data"
-}
-
-// Context constructor (auto-injected)
-@NativeBridge
-class StorageService(private val context: Context) {
-    fun getFilesDir(): String = context.filesDir.path
-}
-
-// Activity constructor (auto-injected)
-@NativeBridge
-class UIService(private val activity: Activity) {
-    fun getScreenWidth(): Int = activity.resources.displayMetrics.widthPixels
-}
-```
 
 ## Runtime API (Without Code Generation)
 
@@ -131,45 +166,34 @@ final model = await device.call<String>('getModel');
 
 // Discover registered classes
 final classes = await FlutterNativeBridge.discover();
-// {'DeviceService': ['getModel', 'getVersion'], 'MainActivity': ['greet']}
-```
-
-## Manual Registration
-
-If auto-discovery doesn't work for your use case:
-
-```kotlin
-override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-    super.configureFlutterEngine(flutterEngine)
-
-    // Manual registration
-    FlutterNativeBridge.registerObjects(
-        DeviceService(),
-        StorageService(applicationContext),
-        CustomService(this)
-    )
-}
+// {'DeviceService': ['getModel', 'getVersion']}
 ```
 
 ## Supported Types
 
-| Kotlin Type | Dart Type |
-|-------------|-----------|
-| `String` | `String` |
-| `Int` | `int` |
-| `Long` | `int` |
-| `Double` | `double` |
-| `Float` | `double` |
-| `Boolean` | `bool` |
-| `List<T>` | `List<T>` |
-| `Map<K, V>` | `Map<K, V>` |
+| Kotlin Type | Swift Type | Dart Type |
+|-------------|------------|-----------|
+| `String` | `String` | `String` |
+| `Int` | `Int` | `int` |
+| `Long` | `Int64` | `int` |
+| `Double` | `Double` | `double` |
+| `Float` | `Float` | `double` |
+| `Boolean` | `Bool` | `bool` |
+| `List<T>` | `[T]` | `List<T>` |
+| `Map<K, V>` | `[K: V]` | `Map<K, V>` |
 
-## Example
+## Complete Example
 
-See the [example](example/) directory for a complete working example.
+### Android (Kotlin)
 
 ```kotlin
 // android/app/src/main/kotlin/.../MainActivity.kt
+package com.example.myapp
+
+import io.nativebridge.FlutterNativeBridge
+import io.nativebridge.NativeBridge
+import io.nativebridge.NativeFunction
+
 @NativeBridge
 class DeviceService {
     fun getDeviceModel(): String = Build.MODEL
@@ -187,67 +211,83 @@ class MainActivity : FlutterActivity() {
 }
 ```
 
+### iOS (Swift)
+
+```swift
+// ios/Runner/DeviceService.swift
+import Foundation
+import UIKit
+
+class DeviceService: NSObject {
+    @objc func getDeviceModel() -> String {
+        return UIDevice.current.model
+    }
+
+    @objc func getIOSVersion() -> String {
+        return UIDevice.current.systemVersion
+    }
+}
+
+// ios/Runner/AppDelegate.swift
+import flutter_native_bridge
+
+@UIApplicationMain
+@objc class AppDelegate: FlutterAppDelegate {
+    override func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        GeneratedPluginRegistrant.register(with: self)
+        FlutterNativeBridge.register(DeviceService())
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+}
+```
+
+### Dart
+
 ```dart
 // lib/main.dart
 import 'native_bridge.g.dart';
 
 void main() async {
   final model = await DeviceService.getDeviceModel();
-  final version = await DeviceService.getAndroidVersion();
-  final greeting = await MainActivity.greet('Flutter');
-
-  print('$model (Android $version)');
-  print(greeting);
+  print('Device: $model');
 }
 ```
 
-## Handling Name Conflicts
-
-If you have two classes with the same simple name (e.g., from different packages), use custom naming:
-
-```kotlin
-// These would conflict (both named "DeviceService")
-// com.app.services.DeviceService
-// com.app.utils.DeviceService
-
-// Solution: Register with custom names
-FlutterNativeBridge.register("MainDeviceService", DeviceService())
-FlutterNativeBridge.register("UtilDeviceService", utilDeviceService)
-```
-
-The plugin automatically:
-- Detects name conflicts during auto-discovery
-- Logs warnings for conflicts
-- Skips conflicting registrations (won't overwrite)
-
-Check logcat for "FlutterNativeBridge" tags to see conflict warnings.
-
 ## Troubleshooting
 
-### Auto-discovery not working?
+### Android: Auto-discovery not working?
 
 Use manual registration:
 ```kotlin
 FlutterNativeBridge.registerObjects(DeviceService(), OtherService())
 ```
 
-### Method not found?
+### Android: Method not found?
 
 Ensure the method is:
 - Public (not `private` or `internal`)
 - Annotated with `@NativeFunction` (if class doesn't have `@NativeBridge`)
 - Not annotated with `@NativeIgnore`
 
-### Type mismatch?
+### iOS: Method not found?
 
-Check that return types match between Kotlin and the generated Dart code. Run the generator again after modifying Kotlin signatures.
+Ensure:
+- Class inherits from `NSObject`
+- Method is marked with `@objc`
+- Return type is Objective-C compatible
 
 ### Name conflicts?
 
-If you see "Name conflict!" in logs:
+If you have classes with the same name on both platforms or from different packages:
 ```kotlin
-// Use custom names
-FlutterNativeBridge.register("CustomName", YourService())
+// Android
+FlutterNativeBridge.register("AndroidDevice", DeviceService())
+
+// iOS
+FlutterNativeBridge.register(name: "iOSDevice", object: DeviceService())
 ```
 
 ## License

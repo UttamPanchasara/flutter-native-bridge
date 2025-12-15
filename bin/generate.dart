@@ -3,7 +3,7 @@ import 'package:flutter_native_bridge/src/generator/generator.dart';
 
 /// Flutter Native Bridge Code Generator
 ///
-/// Scans Kotlin source files for @NativeBridge and @NativeFunction annotations
+/// Scans Kotlin and Swift source files for annotated methods
 /// and generates typed Dart code.
 ///
 /// Usage:
@@ -19,39 +19,58 @@ void main(List<String> args) async {
     exit(1);
   }
 
-  final kotlinDir = Directory('$projectRoot/android/app/src/main/kotlin');
   final outputFile = File('$projectRoot/lib/native_bridge.g.dart');
+  final allClasses = <NativeClass>[];
 
-  if (!kotlinDir.existsSync()) {
-    print('Error: Kotlin directory not found at:');
-    print('  ${kotlinDir.path}');
-    print('');
-    print('Make sure you are in a Flutter project with Android support.');
-    exit(1);
+  // Parse Android (Kotlin)
+  final kotlinDir = Directory('$projectRoot/android/app/src/main/kotlin');
+  if (kotlinDir.existsSync()) {
+    print('Scanning Android: ${kotlinDir.path}');
+    final kotlinParser = KotlinParser();
+    final kotlinClasses = await kotlinParser.parseDirectory(kotlinDir);
+    allClasses.addAll(kotlinClasses);
+    print('  Found ${kotlinClasses.length} class(es)');
+  } else {
+    print('Android: No Kotlin source directory found');
   }
 
-  print('Scanning: ${kotlinDir.path}');
+  // Parse iOS (Swift)
+  final iosDir = Directory('$projectRoot/ios/Runner');
+  if (iosDir.existsSync()) {
+    print('Scanning iOS: ${iosDir.path}');
+    final swiftParser = SwiftParser();
+    final swiftClasses = await swiftParser.parseDirectory(iosDir);
+    allClasses.addAll(swiftClasses);
+    print('  Found ${swiftClasses.length} class(es)');
+  } else {
+    print('iOS: No Swift source directory found');
+  }
+
   print('');
 
-  // Parse Kotlin files
-  final parser = KotlinParser();
-  final classes = await parser.parseDirectory(kotlinDir);
-
-  if (classes.isEmpty) {
-    print('No @NativeBridge classes or @NativeFunction methods found.');
+  if (allClasses.isEmpty) {
+    print('No native classes found.');
     print('');
-    print('Add annotations to your Kotlin code:');
+    print('Android - Add annotations to your Kotlin code:');
     print('');
     print('  @NativeBridge');
     print('  class DeviceService {');
     print('      fun getModel(): String = Build.MODEL');
     print('  }');
+    print('');
+    print('iOS - Add @objc to your Swift methods:');
+    print('');
+    print('  class DeviceService: NSObject {');
+    print('      @objc func getModel() -> String {');
+    print('          return UIDevice.current.model');
+    print('      }');
+    print('  }');
     exit(0);
   }
 
-  print('Found ${classes.length} native class(es):');
-  for (final cls in classes) {
-    print('  - ${cls.name} (${cls.methods.length} methods)');
+  print('Found ${allClasses.length} native class(es):');
+  for (final cls in allClasses) {
+    print('  - ${cls.name} [${cls.platform}] (${cls.methods.length} methods)');
     for (final method in cls.methods) {
       final params = method.params.map((p) => '${p.name}: ${p.type}').join(', ');
       print('      ${method.name}($params): ${method.returnType}');
@@ -60,7 +79,7 @@ void main(List<String> args) async {
 
   // Generate Dart code
   final generator = DartGenerator();
-  final dartCode = generator.generate(classes);
+  final dartCode = generator.generate(allClasses);
 
   // Write output
   await outputFile.writeAsString(dartCode);
@@ -72,11 +91,12 @@ void main(List<String> args) async {
   print('');
   print("  import 'native_bridge.g.dart';");
   print('');
-  for (final cls in classes) {
+  for (final cls in allClasses) {
     if (cls.methods.isNotEmpty) {
       final method = cls.methods.first;
       final params = method.params.map((p) => "'example'").join(', ');
       print('  final result = await ${cls.name}.${method.name}($params);');
+      break;
     }
   }
 }

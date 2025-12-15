@@ -34,6 +34,16 @@ class DeviceService {
   static Future<bool?> isCharging() async {
     return _channel.invokeMethod<bool>('DeviceService.isCharging');
   }
+
+  /// Calls native DeviceService.getIOSVersion
+  static Future<String?> getIOSVersion() async {
+    return _channel.invokeMethod<String>('DeviceService.getIOSVersion');
+  }
+
+  /// Calls native DeviceService.getDeviceName
+  static Future<String?> getDeviceName() async {
+    return _channel.invokeMethod<String>('DeviceService.getDeviceName');
+  }
 }
 
 /// Generated bridge for BatteryService
@@ -48,6 +58,11 @@ class BatteryService {
   /// Calls native BatteryService.isCharging
   static Future<bool?> isCharging() async {
     return _channel.invokeMethod<bool>('BatteryService.isCharging');
+  }
+
+  /// Calls native BatteryService.getBatteryState
+  static Future<String?> getBatteryState() async {
+    return _channel.invokeMethod<String>('BatteryService.getBatteryState');
   }
 }
 
