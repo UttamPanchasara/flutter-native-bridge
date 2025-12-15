@@ -22,23 +22,60 @@ class FlutterNativeBridgePlugin : FlutterPlugin, MethodCallHandler, ActivityAwar
     private var activity: Activity? = null
 
     companion object {
+        private const val TAG = "FlutterNativeBridge"
         private const val CHANNEL_NAME = "flutter_native_bridge"
         private val registeredObjects = mutableMapOf<String, Any>()
 
+        /**
+         * Register an object with a custom name.
+         * Use this to avoid conflicts when classes have the same simple name.
+         */
         @JvmStatic
         fun register(name: String, obj: Any) {
+            if (registeredObjects.containsKey(name)) {
+                val existing = registeredObjects[name]!!::class.java.name
+                val new = obj::class.java.name
+                android.util.Log.w(TAG, "Overwriting '$name': $existing -> $new")
+            }
             registeredObjects[name] = obj
         }
 
+        /**
+         * Register an object using its class simple name.
+         * Warns if a class with the same name is already registered.
+         */
         @JvmStatic
         fun register(obj: Any) {
-            registeredObjects[obj::class.java.simpleName] = obj
+            val name = obj::class.java.simpleName
+            if (registeredObjects.containsKey(name)) {
+                val existing = registeredObjects[name]!!::class.java.name
+                val new = obj::class.java.name
+                if (existing != new) {
+                    android.util.Log.e(TAG,
+                        "Name conflict! '$name' already registered as $existing. " +
+                        "Use register(\"CustomName\", obj) for $new")
+                    return  // Don't overwrite with conflicting class
+                }
+            }
+            registeredObjects[name] = obj
         }
 
         @JvmStatic
         fun unregister(name: String) {
             registeredObjects.remove(name)
         }
+
+        /**
+         * Check if a name is already registered.
+         */
+        @JvmStatic
+        fun isRegistered(name: String): Boolean = registeredObjects.containsKey(name)
+
+        /**
+         * Get all registered class names.
+         */
+        @JvmStatic
+        fun getRegisteredNames(): Set<String> = registeredObjects.keys.toSet()
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {

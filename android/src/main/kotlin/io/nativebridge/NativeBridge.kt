@@ -118,6 +118,16 @@ object FlutterNativeBridge {
             for (clazz in classes) {
                 if (clazz == activity.javaClass) continue
 
+                val simpleName = clazz.simpleName
+
+                // Check for name conflict
+                if (FlutterNativeBridgePlugin.isRegistered(simpleName)) {
+                    android.util.Log.w(TAG,
+                        "Skipping ${clazz.name}: '$simpleName' already registered. " +
+                        "Use registerObjects() with custom name if needed.")
+                    continue
+                }
+
                 val instance = createInstance(clazz)
                 if (instance != null) {
                     FlutterNativeBridgePlugin.register(instance)

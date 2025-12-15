@@ -201,6 +201,27 @@ void main() async {
 }
 ```
 
+## Handling Name Conflicts
+
+If you have two classes with the same simple name (e.g., from different packages), use custom naming:
+
+```kotlin
+// These would conflict (both named "DeviceService")
+// com.app.services.DeviceService
+// com.app.utils.DeviceService
+
+// Solution: Register with custom names
+FlutterNativeBridge.register("MainDeviceService", DeviceService())
+FlutterNativeBridge.register("UtilDeviceService", utilDeviceService)
+```
+
+The plugin automatically:
+- Detects name conflicts during auto-discovery
+- Logs warnings for conflicts
+- Skips conflicting registrations (won't overwrite)
+
+Check logcat for "FlutterNativeBridge" tags to see conflict warnings.
+
 ## Troubleshooting
 
 ### Auto-discovery not working?
@@ -220,6 +241,14 @@ Ensure the method is:
 ### Type mismatch?
 
 Check that return types match between Kotlin and the generated Dart code. Run the generator again after modifying Kotlin signatures.
+
+### Name conflicts?
+
+If you see "Name conflict!" in logs:
+```kotlin
+// Use custom names
+FlutterNativeBridge.register("CustomName", YourService())
+```
 
 ## License
 
