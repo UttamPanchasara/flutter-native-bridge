@@ -45,6 +45,46 @@ annotation class NativeFunction
 annotation class NativeIgnore
 
 /**
+ * Marks a method as a stream that emits continuous events to Flutter.
+ * Use for real-time data like sensor updates, location changes, etc.
+ *
+ * The method receives a StreamSink callback to emit events.
+ *
+ * Example:
+ * ```kotlin
+ * @NativeBridge
+ * class SensorService {
+ *     @NativeStream
+ *     fun accelerometerUpdates(sink: StreamSink) {
+ *         sensorManager.registerListener(object : SensorEventListener {
+ *             override fun onSensorChanged(event: SensorEvent) {
+ *                 sink.success(mapOf("x" to event.values[0], "y" to event.values[1]))
+ *             }
+ *             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+ *         }, accelerometer, SensorManager.SENSOR_DELAY_UI)
+ *     }
+ * }
+ * ```
+ */
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class NativeStream
+
+/**
+ * Callback interface for emitting stream events to Flutter.
+ */
+interface StreamSink {
+    /** Send a success event to Flutter */
+    fun success(event: Any?)
+
+    /** Send an error event to Flutter */
+    fun error(code: String, message: String?, details: Any?)
+
+    /** Signal that the stream has ended */
+    fun endOfStream()
+}
+
+/**
  * Flutter Native Bridge - Registration Helper
  *
  * Provides simple one-line registration with auto-discovery of annotated classes.

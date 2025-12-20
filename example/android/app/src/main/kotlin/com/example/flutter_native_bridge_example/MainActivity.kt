@@ -3,12 +3,16 @@ package com.example.flutter_native_bridge_example
 import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.nativebridge.FlutterNativeBridge
 import io.nativebridge.NativeBridge
 import io.nativebridge.NativeFunction
 import io.nativebridge.NativeIgnore
+import io.nativebridge.NativeStream
+import io.nativebridge.StreamSink
 
 class MainActivity : FlutterActivity() {
 
@@ -59,5 +63,45 @@ class BatteryService(private val context: Context) {
     fun isCharging(): Boolean {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         return bm.isCharging
+    }
+}
+
+/**
+ * Example service demonstrating @NativeStream for EventChannel support.
+ * Emits counter values every second.
+ */
+@NativeBridge
+class CounterService {
+    private val handler = Handler(Looper.getMainLooper())
+    private var counter = 0
+    private var runnable: Runnable? = null
+
+    /**
+     * Stream that emits incrementing counter values every second.
+     * Use @NativeStream to mark methods that emit continuous events.
+     */
+    @NativeStream
+    fun counterUpdates(sink: StreamSink) {
+        counter = 0
+        runnable = object : Runnable {
+            override fun run() {
+                sink.success(mapOf(
+                    "count" to counter,
+                    "timestamp" to System.currentTimeMillis()
+                ))
+                counter++
+                handler.postDelayed(this, 1000)
+            }
+        }
+        handler.post(runnable!!)
+    }
+
+    /**
+     * Stop the counter stream.
+     */
+    fun stopCounter() {
+        runnable?.let { handler.removeCallbacks(it) }
+        runnable = null
+        counter = 0
     }
 }

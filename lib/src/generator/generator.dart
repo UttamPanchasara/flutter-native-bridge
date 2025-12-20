@@ -1,21 +1,51 @@
 import 'dart:io';
 
-/// Represents a parsed native class with its methods.
+/// Represents a parsed native class with its callables (methods and streams).
 class NativeClass {
   final String name;
-  final List<NativeMethod> methods;
-  final String platform; // 'android' or 'ios'
+  final List<NativeCallable> callables;
+  final String platform; // 'android', 'ios', or 'shared'
 
-  NativeClass(this.name, this.methods, {this.platform = 'shared'});
+  NativeClass(this.name, this.callables, {this.platform = 'shared'});
+
+  /// Get only method callables.
+  List<NativeMethod> get methods =>
+      callables.whereType<NativeMethod>().toList();
+
+  /// Get only stream callables.
+  List<NativeStream> get streams =>
+      callables.whereType<NativeStream>().toList();
 }
 
-/// Represents a native method with its signature.
-class NativeMethod {
+/// Base class for native callable signatures.
+abstract class NativeCallable {
+  String get name;
+  String get returnType;
+  List<NativeParam> get params;
+}
+
+/// Represents a native method that returns Future<T>.
+class NativeMethod implements NativeCallable {
+  @override
   final String name;
+  @override
   final String returnType;
+  @override
   final List<NativeParam> params;
 
   NativeMethod(this.name, this.returnType, this.params);
+}
+
+/// Represents a native stream that returns Stream<T>.
+class NativeStream implements NativeCallable {
+  @override
+  final String name;
+  @override
+  final String returnType;
+  @override
+  final List<NativeParam> params;
+
+  NativeStream(this.name, this.returnType, this.params);
 }
 
 /// Represents a method parameter.
@@ -49,7 +79,7 @@ class KotlinParser {
 
     // Find @NativeBridge annotated classes
     final bridgeClassRegex = RegExp(
-      r'@NativeBridge\s*(?:\([^)]*\))?\s*class\s+(\w+)',
+      r'@NativeBridge\s*(?:\([^)]*\))?\s*class\s+(\w+)(?:\s*[:(][^{]*)?\s*\{',
       multiLine: true,
     );
 
@@ -57,12 +87,14 @@ class KotlinParser {
       final className = match.group(1)!;
       final classBody = _extractClassBody(content, match.end);
       final methods = _parseClassMethods(classBody, excludeIgnored: true);
-      if (methods.isNotEmpty) {
-        classes.add(NativeClass(className, methods, platform: 'android'));
+      final streams = _parseStreamMethods(classBody);
+      final callables = <NativeCallable>[...methods, ...streams];
+      if (callables.isNotEmpty) {
+        classes.add(NativeClass(className, callables, platform: 'android'));
       }
     }
 
-    // Find classes with @NativeFunction methods (not @NativeBridge)
+    // Find classes with @NativeFunction or @NativeStream methods (not @NativeBridge)
     final classRegex = RegExp(
       r'class\s+(\w+)(?:\s*[:(][^{]*)?\s*\{',
       multiLine: true,
@@ -80,8 +112,10 @@ class KotlinParser {
 
       final classBody = _extractClassBody(content, match.end);
       final methods = _parseNativeFunctions(classBody);
-      if (methods.isNotEmpty) {
-        classes.add(NativeClass(className, methods, platform: 'android'));
+      final streams = _parseStreamMethods(classBody);
+      final callables = <NativeCallable>[...methods, ...streams];
+      if (callables.isNotEmpty) {
+        classes.add(NativeClass(className, callables, platform: 'android'));
       }
     }
 
@@ -102,12 +136,13 @@ class KotlinParser {
     return content.substring(start, i - 1);
   }
 
-  /// Parse all public methods from @NativeBridge class (excluding @NativeIgnore).
+  /// Parse all public methods from @NativeBridge class (excluding @NativeIgnore and @NativeStream).
   List<NativeMethod> _parseClassMethods(String classBody, {bool excludeIgnored = false}) {
     final methods = <NativeMethod>[];
 
+    // Capture return type more broadly - everything after : until { or = or newline
     final methodRegex = RegExp(
-      r'(?:@NativeIgnore\s+)?(?:public\s+)?fun\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*([^\s{=]+))?',
+      r'(?:@NativeIgnore\s+|@NativeStream\s+)?(?:override\s+)?(?:public\s+)?fun\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*([^{=\n]+))?',
       multiLine: true,
     );
 
@@ -117,12 +152,18 @@ class KotlinParser {
       // Skip if @NativeIgnore
       if (excludeIgnored && fullMatch.contains('@NativeIgnore')) continue;
 
-      // Skip private/internal methods
-      if (fullMatch.contains('private ') || fullMatch.contains('internal ')) continue;
+      // Skip if @NativeStream (handled separately)
+      if (fullMatch.contains('@NativeStream')) continue;
+
+      // Skip private/internal/override methods
+      if (fullMatch.contains('private ') || fullMatch.contains('internal ') || fullMatch.contains('override ')) continue;
 
       final methodName = match.group(1)!;
       final paramsStr = match.group(2) ?? '';
-      final returnType = match.group(3) ?? 'Unit';
+      final returnType = (match.group(3) ?? 'Unit').trim();
+
+      // Skip methods with StreamSink parameter (they are streams)
+      if (paramsStr.contains('StreamSink')) continue;
 
       methods.add(NativeMethod(methodName, returnType, _parseParams(paramsStr)));
     }
@@ -135,14 +176,14 @@ class KotlinParser {
     final methods = <NativeMethod>[];
 
     final methodRegex = RegExp(
-      r'@NativeFunction\s*(?:\([^)]*\))?\s*(?:public\s+)?fun\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*([^\s{=]+))?',
+      r'@NativeFunction\s*(?:\([^)]*\))?\s*(?:public\s+)?fun\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*([^{=\n]+))?',
       multiLine: true,
     );
 
     for (final match in methodRegex.allMatches(classBody)) {
       final methodName = match.group(1)!;
       final paramsStr = match.group(2) ?? '';
-      final returnType = match.group(3) ?? 'Unit';
+      final returnType = (match.group(3) ?? 'Unit').trim();
 
       methods.add(NativeMethod(methodName, returnType, _parseParams(paramsStr)));
     }
@@ -150,17 +191,78 @@ class KotlinParser {
     return methods;
   }
 
+  /// Parse methods with @NativeStream annotation.
+  List<NativeStream> _parseStreamMethods(String classBody) {
+    final streams = <NativeStream>[];
+
+    final methodRegex = RegExp(
+      r'@NativeStream\s*(?:\([^)]*\))?\s*(?:public\s+)?fun\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*([^{=\n]+))?',
+      multiLine: true,
+    );
+
+    for (final match in methodRegex.allMatches(classBody)) {
+      final methodName = match.group(1)!;
+      final paramsStr = match.group(2) ?? '';
+
+      // Parse params but exclude StreamSink from the generated signature
+      final params = _parseParams(paramsStr)
+          .where((p) => p.type != 'StreamSink')
+          .toList();
+
+      // Stream methods emit dynamic data by default
+      streams.add(NativeStream(methodName, 'dynamic', params));
+    }
+
+    return streams;
+  }
+
   List<NativeParam> _parseParams(String paramsStr) {
     if (paramsStr.trim().isEmpty) return [];
 
     final params = <NativeParam>[];
-    final paramRegex = RegExp(r'(\w+)\s*:\s*([^,]+)');
 
-    for (final match in paramRegex.allMatches(paramsStr)) {
-      params.add(NativeParam(match.group(1)!, match.group(2)!.trim()));
+    // Split by commas, but respect angle bracket nesting
+    final paramParts = _splitByComma(paramsStr);
+
+    for (final part in paramParts) {
+      final colonIndex = part.indexOf(':');
+      if (colonIndex == -1) continue;
+
+      final name = part.substring(0, colonIndex).trim();
+      final type = part.substring(colonIndex + 1).trim();
+
+      if (name.isNotEmpty && type.isNotEmpty) {
+        params.add(NativeParam(name, type));
+      }
     }
 
     return params;
+  }
+
+  /// Split a string by commas, respecting bracket nesting.
+  List<String> _splitByComma(String str) {
+    final parts = <String>[];
+    var depth = 0;
+    var start = 0;
+
+    for (var i = 0; i < str.length; i++) {
+      final char = str[i];
+      if (char == '<' || char == '(' || char == '[') {
+        depth++;
+      } else if (char == '>' || char == ')' || char == ']') {
+        depth--;
+      } else if (char == ',' && depth == 0) {
+        parts.add(str.substring(start, i).trim());
+        start = i + 1;
+      }
+    }
+
+    // Add the last part
+    if (start < str.length) {
+      parts.add(str.substring(start).trim());
+    }
+
+    return parts;
   }
 }
 
@@ -206,9 +308,11 @@ class SwiftParser {
 
       final classBody = _extractClassBody(content, match.end);
       final methods = _parseObjcMethods(classBody);
+      final streams = _parseStreamMethods(classBody);
+      final callables = <NativeCallable>[...methods, ...streams];
 
-      if (methods.isNotEmpty) {
-        classes.add(NativeClass(className, methods, platform: 'ios'));
+      if (callables.isNotEmpty) {
+        classes.add(NativeClass(className, callables, platform: 'ios'));
       }
     }
 
@@ -229,20 +333,23 @@ class SwiftParser {
     return content.substring(start, i - 1);
   }
 
-  /// Parse @objc methods from a class body.
+  /// Parse @objc methods from a class body (excluding stream methods).
   List<NativeMethod> _parseObjcMethods(String classBody) {
     final methods = <NativeMethod>[];
 
-    // Match @objc func declarations
+    // Match @objc func declarations - capture return type broadly
     final methodRegex = RegExp(
-      r'@objc\s+(?:public\s+)?func\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^\s{]+))?',
+      r'@objc\s+(?:public\s+)?func\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*([^{\n]+))?',
       multiLine: true,
     );
 
     for (final match in methodRegex.allMatches(classBody)) {
       final methodName = match.group(1)!;
       final paramsStr = match.group(2) ?? '';
-      final returnType = match.group(3) ?? 'Void';
+      final returnType = (match.group(3) ?? 'Void').trim();
+
+      // Skip stream methods (methods with StreamSink parameter)
+      if (paramsStr.contains('StreamSink')) continue;
 
       methods.add(NativeMethod(methodName, returnType, _parseParams(paramsStr)));
     }
@@ -250,18 +357,92 @@ class SwiftParser {
     return methods;
   }
 
+  /// Parse stream methods from a class body (methods with StreamSink parameter).
+  List<NativeStream> _parseStreamMethods(String classBody) {
+    final streams = <NativeStream>[];
+
+    // Match @objc func declarations with StreamSink parameter
+    final methodRegex = RegExp(
+      r'@objc\s+(?:public\s+)?func\s+(\w+)\s*\(([^)]*StreamSink[^)]*)\)',
+      multiLine: true,
+    );
+
+    for (final match in methodRegex.allMatches(classBody)) {
+      var methodName = match.group(1)!;
+      final paramsStr = match.group(2) ?? '';
+
+      // Remove "WithSink" suffix if present
+      if (methodName.endsWith('WithSink')) {
+        methodName = methodName.substring(0, methodName.length - 8);
+      }
+
+      // Parse params but exclude StreamSink from the generated signature
+      final params = _parseParams(paramsStr)
+          .where((p) => p.type != 'StreamSink')
+          .toList();
+
+      // Stream methods emit dynamic data by default
+      streams.add(NativeStream(methodName, 'dynamic', params));
+    }
+
+    return streams;
+  }
+
   List<NativeParam> _parseParams(String paramsStr) {
     if (paramsStr.trim().isEmpty) return [];
 
     final params = <NativeParam>[];
-    // Swift params: name: Type or _ name: Type
-    final paramRegex = RegExp(r'(?:_\s+)?(\w+)\s*:\s*([^,\)]+)');
 
-    for (final match in paramRegex.allMatches(paramsStr)) {
-      params.add(NativeParam(match.group(1)!, match.group(2)!.trim()));
+    // Split by commas, but respect bracket nesting
+    final paramParts = _splitByComma(paramsStr);
+
+    for (final part in paramParts) {
+      // Swift params: name: Type or _ name: Type or externalName internalName: Type
+      final colonIndex = part.indexOf(':');
+      if (colonIndex == -1) continue;
+
+      var namePart = part.substring(0, colonIndex).trim();
+      final type = part.substring(colonIndex + 1).trim();
+
+      // Handle external/internal names - take the last word before :
+      final nameParts = namePart.split(RegExp(r'\s+'));
+      final name = nameParts.last;
+
+      // Skip underscore-only names
+      if (name == '_') continue;
+
+      if (name.isNotEmpty && type.isNotEmpty) {
+        params.add(NativeParam(name, type));
+      }
     }
 
     return params;
+  }
+
+  /// Split a string by commas, respecting bracket nesting.
+  List<String> _splitByComma(String str) {
+    final parts = <String>[];
+    var depth = 0;
+    var start = 0;
+
+    for (var i = 0; i < str.length; i++) {
+      final char = str[i];
+      if (char == '<' || char == '(' || char == '[') {
+        depth++;
+      } else if (char == '>' || char == ')' || char == ']') {
+        depth--;
+      } else if (char == ',' && depth == 0) {
+        parts.add(str.substring(start, i).trim());
+        start = i + 1;
+      }
+    }
+
+    // Add the last part
+    if (start < str.length) {
+      parts.add(str.substring(start).trim());
+    }
+
+    return parts;
   }
 }
 
@@ -278,6 +459,7 @@ class DartGenerator {
     buffer.writeln("import 'package:flutter/services.dart';");
     buffer.writeln('');
     buffer.writeln("const _channel = MethodChannel('flutter_native_bridge');");
+    buffer.writeln("const _eventChannelPrefix = 'flutter_native_bridge/events/';");
     buffer.writeln('');
 
     // Merge classes with same name from different platforms
@@ -296,20 +478,27 @@ class DartGenerator {
 
     for (final cls in classes) {
       if (merged.containsKey(cls.name)) {
-        // Merge methods from both platforms
+        // Merge callables from both platforms
         final existing = merged[cls.name]!;
-        final allMethods = {...existing.methods.map((m) => m.name), ...cls.methods.map((m) => m.name)};
-        final combinedMethods = <NativeMethod>[];
+        final allNames = {
+          ...existing.callables.map((c) => c.name),
+          ...cls.callables.map((c) => c.name),
+        };
 
-        for (final methodName in allMethods) {
-          final method = cls.methods.firstWhere(
-            (m) => m.name == methodName,
-            orElse: () => existing.methods.firstWhere((m) => m.name == methodName),
+        final combinedCallables = <NativeCallable>[];
+        for (final name in allNames) {
+          final callable = cls.callables.firstWhere(
+            (c) => c.name == name,
+            orElse: () => existing.callables.firstWhere((c) => c.name == name),
           );
-          combinedMethods.add(method);
+          combinedCallables.add(callable);
         }
 
-        merged[cls.name] = NativeClass(cls.name, combinedMethods, platform: 'shared');
+        merged[cls.name] = NativeClass(
+          cls.name,
+          combinedCallables,
+          platform: 'shared',
+        );
       } else {
         merged[cls.name] = cls;
       }
@@ -323,9 +512,14 @@ class DartGenerator {
     buffer.writeln('class ${cls.name} {');
     buffer.writeln('  ${cls.name}._();');
 
-    for (final method in cls.methods) {
+    for (final callable in cls.callables) {
       buffer.writeln('');
-      _generateMethod(buffer, cls.name, method);
+      switch (callable) {
+        case NativeMethod method:
+          _generateMethod(buffer, cls.name, method);
+        case NativeStream stream:
+          _generateStreamMethod(buffer, cls.name, stream);
+      }
     }
 
     buffer.writeln('}');
@@ -336,8 +530,11 @@ class DartGenerator {
     final params = method.params;
     final paramList = params.map((p) => '${_nativeToDartType(p.type)} ${p.name}').join(', ');
 
+    // void cannot be nullable in Dart
+    final futureType = dartReturnType == 'void' ? 'void' : '$dartReturnType?';
+
     buffer.writeln('  /// Calls native $className.${method.name}');
-    buffer.writeln('  static Future<$dartReturnType?> ${method.name}($paramList) async {');
+    buffer.writeln('  static Future<$futureType> ${method.name}($paramList) async {');
 
     if (params.isEmpty) {
       buffer.writeln("    return _channel.invokeMethod<$dartReturnType>('$className.${method.name}');");
@@ -346,6 +543,28 @@ class DartGenerator {
     } else {
       final mapEntries = params.map((p) => "'${p.name}': ${p.name}").join(', ');
       buffer.writeln("    return _channel.invokeMethod<$dartReturnType>('$className.${method.name}', {$mapEntries});");
+    }
+
+    buffer.writeln('  }');
+  }
+
+  void _generateStreamMethod(StringBuffer buffer, String className, NativeStream stream) {
+    final dartReturnType = _nativeToDartType(stream.returnType);
+    final params = stream.params;
+    final paramList = params.map((p) => '${_nativeToDartType(p.type)} ${p.name}').join(', ');
+
+    buffer.writeln('  /// Subscribes to native $className.${stream.name} stream');
+    buffer.writeln('  static Stream<$dartReturnType> ${stream.name}($paramList) {');
+    buffer.writeln("    const channelName = '\${_eventChannelPrefix}$className.${stream.name}';");
+    buffer.writeln('    const eventChannel = EventChannel(channelName);');
+
+    if (params.isEmpty) {
+      buffer.writeln('    return eventChannel.receiveBroadcastStream().cast<$dartReturnType>();');
+    } else if (params.length == 1) {
+      buffer.writeln('    return eventChannel.receiveBroadcastStream(${params.first.name}).cast<$dartReturnType>();');
+    } else {
+      final mapEntries = params.map((p) => "'${p.name}': ${p.name}").join(', ');
+      buffer.writeln('    return eventChannel.receiveBroadcastStream({$mapEntries}).cast<$dartReturnType>();');
     }
 
     buffer.writeln('  }');

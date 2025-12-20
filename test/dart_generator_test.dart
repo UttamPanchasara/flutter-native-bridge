@@ -76,7 +76,7 @@ void main() {
       expect(code, contains('Future<double?> getDouble'));
       expect(code, contains('Future<double?> getFloat'));
       expect(code, contains('Future<bool?> getBool'));
-      expect(code, contains('Future<void?> getUnit'));
+      expect(code, contains('Future<void> getUnit'));
     });
 
     test('maps Swift types to Dart types', () {
@@ -96,7 +96,7 @@ void main() {
       expect(code, contains('Future<int?> getInt'));
       expect(code, contains('Future<double?> getDouble'));
       expect(code, contains('Future<bool?> getBool'));
-      expect(code, contains('Future<void?> getVoid'));
+      expect(code, contains('Future<void> getVoid'));
     });
 
     test('merges classes with same name from different platforms', () {

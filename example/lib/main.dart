@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'native_bridge.g.dart';
@@ -18,10 +19,53 @@ class _MyAppState extends State<MyApp> {
   String _batteryInfo = 'Loading...';
   String _greeting = '';
 
+  // Stream support
+  StreamSubscription? _counterSubscription;
+  int _counter = 0;
+  bool _isStreaming = false;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _stopStream();
+    super.dispose();
+  }
+
+  void _startStream() {
+    if (_isStreaming) return;
+
+    setState(() {
+      _isStreaming = true;
+      _counter = 0;
+    });
+
+    _counterSubscription = CounterService.counterUpdates().listen(
+      (data) {
+        if (data is Map) {
+          setState(() {
+            _counter = data['count'] as int? ?? 0;
+          });
+        }
+      },
+      onError: (error) {
+        debugPrint('Stream error: $error');
+        _stopStream();
+      },
+    );
+  }
+
+  void _stopStream() {
+    _counterSubscription?.cancel();
+    _counterSubscription = null;
+    CounterService.stopCounter();
+    setState(() {
+      _isStreaming = false;
+    });
   }
 
   Future<void> _loadData() async {
@@ -112,9 +156,53 @@ class _MyAppState extends State<MyApp> {
               ),
               Text(_greeting),
               const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              const Text(
+                'Stream Demo (EventChannel):',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(
+                    'Counter: $_counter',
+                    style: const TextStyle(fontSize: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  if (_isStreaming)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  ElevatedButton(
+                    onPressed: _isStreaming ? null : _startStream,
+                    child: const Text('Start Stream'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _isStreaming ? _stopStream : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Stop Stream'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: _loadData,
-                child: const Text('Refresh'),
+                child: const Text('Refresh Device Info'),
               ),
             ],
           ),

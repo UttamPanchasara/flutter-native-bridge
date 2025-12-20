@@ -5,6 +5,7 @@
 import 'package:flutter/services.dart';
 
 const _channel = MethodChannel('flutter_native_bridge');
+const _eventChannelPrefix = 'flutter_native_bridge/events/';
 
 /// Generated bridge for DeviceService
 class DeviceService {
@@ -23,16 +24,6 @@ class DeviceService {
   /// Calls native DeviceService.getManufacturer
   static Future<String?> getManufacturer() async {
     return _channel.invokeMethod<String>('DeviceService.getManufacturer');
-  }
-
-  /// Calls native DeviceService.getBatteryLevel
-  static Future<int?> getBatteryLevel() async {
-    return _channel.invokeMethod<int>('DeviceService.getBatteryLevel');
-  }
-
-  /// Calls native DeviceService.isCharging
-  static Future<bool?> isCharging() async {
-    return _channel.invokeMethod<bool>('DeviceService.isCharging');
   }
 
   /// Calls native DeviceService.getIOSVersion
@@ -66,6 +57,23 @@ class BatteryService {
   }
 }
 
+/// Generated bridge for CounterService
+class CounterService {
+  CounterService._();
+
+  /// Calls native CounterService.stopCounter
+  static Future<void> stopCounter() async {
+    return _channel.invokeMethod<void>('CounterService.stopCounter');
+  }
+
+  /// Subscribes to native CounterService.counterUpdates stream
+  static Stream<dynamic> counterUpdates() {
+    const channelName = '${_eventChannelPrefix}CounterService.counterUpdates';
+    const eventChannel = EventChannel(channelName);
+    return eventChannel.receiveBroadcastStream().cast<dynamic>();
+  }
+}
+
 /// Generated bridge for MainActivity
 class MainActivity {
   MainActivity._();
@@ -76,8 +84,8 @@ class MainActivity {
   }
 
   /// Calls native MainActivity.getData
-  static Future<Map<dynamic, dynamic>?> getData(Map<dynamic, dynamic> data) async {
-    return _channel.invokeMethod<Map<dynamic, dynamic>>('MainActivity.getData', data);
+  static Future<Map<String, dynamic>?> getData(Map<String, dynamic> data) async {
+    return _channel.invokeMethod<Map<String, dynamic>>('MainActivity.getData', data);
   }
 }
 

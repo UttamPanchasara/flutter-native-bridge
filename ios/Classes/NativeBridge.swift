@@ -76,3 +76,45 @@ import Foundation
 @objc public protocol NativeBridgeClass: AnyObject {
     // Marker protocol - implement @objc methods to expose them
 }
+
+// MARK: - Stream Support
+
+/// Protocol for emitting stream events to Flutter.
+/// Used with methods that need to send continuous data updates.
+///
+/// Example:
+/// ```swift
+/// class SensorService: NSObject {
+///     @objc func accelerometerUpdates(_ sink: StreamSink) {
+///         // Start sensor updates
+///         motionManager.startAccelerometerUpdates(to: .main) { data, error in
+///             if let error = error {
+///                 sink.error(code: "SENSOR_ERROR", message: error.localizedDescription, details: nil)
+///                 return
+///             }
+///             if let data = data {
+///                 sink.success(["x": data.acceleration.x, "y": data.acceleration.y])
+///             }
+///         }
+///     }
+/// }
+/// ```
+@objc public protocol StreamSink: AnyObject {
+    /// Send a success event to Flutter
+    func success(_ event: Any?)
+
+    /// Send an error event to Flutter
+    func error(code: String, message: String?, details: Any?)
+
+    /// Signal that the stream has ended
+    func endOfStream()
+}
+
+/// Marker protocol for stream methods.
+/// Conform to this protocol in classes that have stream methods.
+///
+/// Note: In Swift/iOS, stream methods are identified by having a StreamSink parameter.
+/// Unlike Android, there's no annotation - just use @objc and accept StreamSink.
+@objc public protocol NativeStreamClass: AnyObject {
+    // Marker protocol - implement @objc methods with StreamSink parameter
+}

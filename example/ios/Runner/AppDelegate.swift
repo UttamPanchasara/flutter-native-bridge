@@ -13,6 +13,7 @@ import flutter_native_bridge
         // Register native services with Flutter Native Bridge
         FlutterNativeBridge.register(DeviceService())
         FlutterNativeBridge.register(BatteryService())
+        FlutterNativeBridge.register(CounterService())
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }

@@ -4,33 +4,86 @@ import UIKit
 /// Flutter Native Bridge Plugin for iOS
 ///
 /// Bridges Flutter and native iOS code using Objective-C runtime.
-/// Use @objc to expose methods to Flutter.
+/// Supports both MethodChannel (request-response) and EventChannel (streams).
 public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
     private static var registeredObjects: [String: AnyObject] = [:]
+    private static var registrar: FlutterPluginRegistrar?
+
+    // Track active event channels and their sinks
+    private static var activeEventChannels: [String: FlutterEventChannel] = [:]
+    private static var activeStreamSinks: [String: EventSinkWrapper] = [:]
+    private static var streamHandlers: [String: StreamHandler] = [:]
+
+    private static let eventChannelPrefix = "flutter_native_bridge/events/"
 
     public static func register(with registrar: FlutterPluginRegistrar) {
+        self.registrar = registrar
+
         let channel = FlutterMethodChannel(
             name: "flutter_native_bridge",
             binaryMessenger: registrar.messenger()
         )
         let instance = FlutterNativeBridgePlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
+
+        // Setup event channels for all registered stream methods
+        setupEventChannels()
+    }
+
+    /// Setup EventChannels for all stream methods in registered objects.
+    private static func setupEventChannels() {
+        guard let registrar = registrar else { return }
+
+        for (className, target) in registeredObjects {
+            let streamMethods = getStreamMethods(target: target)
+            for methodName in streamMethods {
+                let channelName = "\(eventChannelPrefix)\(className).\(methodName)"
+
+                // Skip if already setup
+                if activeEventChannels[channelName] != nil { continue }
+
+                let eventChannel = FlutterEventChannel(
+                    name: channelName,
+                    binaryMessenger: registrar.messenger()
+                )
+
+                let handler = StreamHandler(className: className, methodName: methodName, target: target)
+                eventChannel.setStreamHandler(handler)
+
+                activeEventChannels[channelName] = eventChannel
+                streamHandlers[channelName] = handler
+
+                NSLog("FlutterNativeBridge: Setup EventChannel: \(channelName)")
+            }
+        }
     }
 
     // MARK: - Registration Methods (Called from FlutterNativeBridge helper)
 
     static func registerObject(name: String, object: AnyObject) {
         registeredObjects[name] = object
+        // Setup event channels for any stream methods in this object
+        setupEventChannels()
     }
 
     static func registerObject(_ object: AnyObject) {
         let name = String(describing: type(of: object))
             .components(separatedBy: ".").last ?? String(describing: type(of: object))
         registeredObjects[name] = object
+        // Setup event channels for any stream methods in this object
+        setupEventChannels()
     }
 
     static func unregisterObject(name: String) {
+        // Clean up any event channels for this object
+        let prefix = "\(eventChannelPrefix)\(name)."
+        for channelName in activeEventChannels.keys where channelName.hasPrefix(prefix) {
+            activeEventChannels[channelName]?.setStreamHandler(nil)
+            activeEventChannels.removeValue(forKey: channelName)
+            activeStreamSinks.removeValue(forKey: channelName)
+            streamHandlers.removeValue(forKey: channelName)
+        }
         registeredObjects.removeValue(forKey: name)
     }
 
@@ -63,6 +116,26 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
             var discovery: [String: [String]] = [:]
             for (name, obj) in FlutterNativeBridgePlugin.registeredObjects {
                 discovery[name] = getExposedMethods(target: obj)
+            }
+            result(discovery)
+            return
+
+        case "_getStreams":
+            guard let className = call.arguments as? String else {
+                result(FlutterError(code: "INVALID_ARG", message: "Class name required", details: nil))
+                return
+            }
+            guard let target = FlutterNativeBridgePlugin.registeredObjects[className] else {
+                result(FlutterError(code: "NOT_FOUND", message: "Class '\(className)' not registered", details: nil))
+                return
+            }
+            result(FlutterNativeBridgePlugin.getStreamMethods(target: target))
+            return
+
+        case "_discoverStreams":
+            var discovery: [String: [String]] = [:]
+            for (name, obj) in FlutterNativeBridgePlugin.registeredObjects {
+                discovery[name] = FlutterNativeBridgePlugin.getStreamMethods(target: obj)
             }
             result(discovery)
             return
@@ -187,6 +260,7 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
     private func getExposedMethods(target: AnyObject) -> [String] {
         var methods: Set<String> = []
+        let streamMethods = FlutterNativeBridgePlugin.getStreamMethods(target: target)
 
         var methodCount: UInt32 = 0
         guard let methodList = class_copyMethodList(type(of: target), &methodCount) else {
@@ -213,6 +287,9 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
                 name = String(name.dropLast(4))
             }
 
+            // Exclude stream methods from regular methods
+            if streamMethods.contains(name) { continue }
+
             // Only include user-defined methods
             if !name.isEmpty && name.first?.isLowercase == true {
                 methods.insert(name)
@@ -221,5 +298,168 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
         free(methodList)
         return Array(methods).sorted()
+    }
+
+    // MARK: - Stream Discovery
+
+    /// Get all stream methods for a target object.
+    /// Stream methods are identified by having a StreamSink parameter.
+    private static func getStreamMethods(target: AnyObject) -> [String] {
+        var methods: Set<String> = []
+
+        var methodCount: UInt32 = 0
+        guard let methodList = class_copyMethodList(type(of: target), &methodCount) else {
+            return []
+        }
+
+        for i in 0..<Int(methodCount) {
+            let method = methodList[i]
+            let selector = method_getName(method)
+            let selectorName = NSStringFromSelector(selector)
+
+            // Filter out system methods
+            if selectorName.hasPrefix("_") || selectorName.hasPrefix(".") { continue }
+            if selectorName.contains("init") || selectorName.contains("dealloc") { continue }
+            if selectorName.contains(".cxx") { continue }
+
+            // Check if this method has a StreamSink parameter
+            // Methods with StreamSink will have selector like "methodNameWithSink:" or "methodName:"
+            // We check the method signature for StreamSink type
+            let numberOfArgs = method_getNumberOfArguments(method)
+
+            // Check each argument type (skip self and _cmd which are first 2)
+            var hasStreamSink = false
+            for argIndex in 2..<numberOfArgs {
+                if let argType = method_copyArgumentType(method, argIndex) {
+                    let typeString = String(cString: argType)
+                    free(argType)
+
+                    // Check if argument is an object that conforms to StreamSink
+                    // The type encoding for id<StreamSink> or similar will contain "@"
+                    if typeString.contains("@") {
+                        // We need to check if the selector contains "sink" (case insensitive)
+                        // This is a heuristic since we can't directly check protocol conformance at runtime
+                        let lowerSelector = selectorName.lowercased()
+                        if lowerSelector.contains("sink") {
+                            hasStreamSink = true
+                            break
+                        }
+                    }
+                }
+            }
+
+            if hasStreamSink {
+                var name = selectorName
+
+                // Extract method name (before first colon)
+                if let colonIndex = name.firstIndex(of: ":") {
+                    name = String(name[..<colonIndex])
+                }
+
+                // Remove "WithSink" suffix if present
+                if name.hasSuffix("WithSink") {
+                    name = String(name.dropLast(8))
+                }
+
+                if !name.isEmpty && name.first?.isLowercase == true {
+                    methods.insert(name)
+                }
+            }
+        }
+
+        free(methodList)
+        return Array(methods).sorted()
+    }
+
+    /// Find and invoke a stream method on a target.
+    static func invokeStreamMethod(target: AnyObject, methodName: String, sink: StreamSink, arguments: Any?) {
+        // Build possible selectors for stream methods
+        let selectors = [
+            Selector("\(methodName)WithSink:"),
+            Selector("\(methodName):"),
+            Selector("\(methodName)WithSink:arguments:"),
+            Selector("\(methodName):arguments:")
+        ]
+
+        for selector in selectors {
+            if target.responds(to: selector) {
+                if selector.description.contains("arguments") {
+                    _ = target.perform(selector, with: sink, with: arguments)
+                } else {
+                    _ = target.perform(selector, with: sink)
+                }
+                return
+            }
+        }
+
+        // Method not found - send error
+        sink.error(code: "NOT_FOUND", message: "Stream method '\(methodName)' not found", details: nil)
+    }
+}
+
+// MARK: - Stream Handler
+
+/// Handles FlutterEventChannel stream lifecycle.
+private class StreamHandler: NSObject, FlutterStreamHandler {
+    let className: String
+    let methodName: String
+    weak var target: AnyObject?
+
+    init(className: String, methodName: String, target: AnyObject) {
+        self.className = className
+        self.methodName = methodName
+        self.target = target
+        super.init()
+    }
+
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        guard let target = target else {
+            return FlutterError(code: "TARGET_GONE", message: "Target object no longer exists", details: nil)
+        }
+
+        let channelName = "\(FlutterNativeBridgePlugin.eventChannelPrefix)\(className).\(methodName)"
+        let sinkWrapper = EventSinkWrapper(eventSink: events)
+        FlutterNativeBridgePlugin.activeStreamSinks[channelName] = sinkWrapper
+
+        // Invoke the stream method with the sink
+        FlutterNativeBridgePlugin.invokeStreamMethod(
+            target: target,
+            methodName: methodName,
+            sink: sinkWrapper,
+            arguments: arguments
+        )
+
+        return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        let channelName = "\(FlutterNativeBridgePlugin.eventChannelPrefix)\(className).\(methodName)"
+        FlutterNativeBridgePlugin.activeStreamSinks.removeValue(forKey: channelName)
+        NSLog("FlutterNativeBridge: Stream cancelled: \(channelName)")
+        return nil
+    }
+}
+
+// MARK: - Event Sink Wrapper
+
+/// Wraps Flutter's EventSink to implement our StreamSink protocol.
+class EventSinkWrapper: NSObject, StreamSink {
+    private let eventSink: FlutterEventSink
+
+    init(eventSink: @escaping FlutterEventSink) {
+        self.eventSink = eventSink
+        super.init()
+    }
+
+    func success(_ event: Any?) {
+        eventSink(event)
+    }
+
+    func error(code: String, message: String?, details: Any?) {
+        eventSink(FlutterError(code: code, message: message, details: details))
+    }
+
+    func endOfStream() {
+        eventSink(FlutterEndOfEventStream)
     }
 }

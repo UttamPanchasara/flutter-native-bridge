@@ -2,15 +2,18 @@
 
 Zero-boilerplate bridge between Flutter and native platforms. Call native Kotlin/Swift methods from Dart with minimal setup.
 
+Supports both **MethodChannel** (request-response) and **EventChannel** (streams) communication patterns.
+
 ## Features
 
+- **MethodChannel Support** - Call native methods and get responses (`Future<T>`)
+- **EventChannel Support** - Subscribe to native streams for real-time data (`Stream<T>`)
 - **Cross-Platform** - Supports both Android (Kotlin) and iOS (Swift)
 - **Minimal Setup** - Just add annotations and one line of registration
-- **Auto-Discovery** - Automatically finds and registers annotated classes
+- **Auto-Discovery** - Automatically finds and registers annotated classes (Android)
 - **Type-Safe** - Generated Dart code with full type support
 - **IDE Autocomplete** - Works seamlessly with your IDE
 - **No Native Dependencies** - No KSP or annotation processors needed
-- **Flexible** - Use code generation or runtime calls
 
 ## Installation
 
@@ -23,66 +26,130 @@ dependencies:
 
 ## Quick Start
 
-### Android (Kotlin)
+### 1. Write Native Code
 
-#### 1. Annotate Your Kotlin Code
+**Android (Kotlin)**
 
 ```kotlin
-// Option A: Expose all methods with @NativeBridge
+// Android: MainActivity.kt
+import io.nativebridge.*
+
 @NativeBridge
 class DeviceService {
-    fun getModel(): String = Build.MODEL
-    fun getVersion(): Int = Build.VERSION.SDK_INT
+    // Method (MethodChannel)
+    fun getDeviceModel(): String = Build.MODEL
+    fun getBatteryLevel(): Int = // ...
 
-    @NativeIgnore  // Exclude specific methods
+    @NativeIgnore  // Exclude from Flutter
     fun internalMethod() { }
 }
 
-// Option B: Expose specific methods with @NativeFunction
-class MainActivity : FlutterActivity() {
-    @NativeFunction
-    fun greet(name: String): String = "Hello, $name!"
+@NativeBridge
+class CounterService {
+    private val handler = Handler(Looper.getMainLooper())
+    private var counter = 0
+    private var runnable: Runnable? = null
+
+    // Stream (EventChannel)
+    @NativeStream
+    fun counterUpdates(sink: StreamSink) {
+        counter = 0
+        runnable = object : Runnable {
+            override fun run() {
+                sink.success(mapOf(
+                    "count" to counter,
+                    "timestamp" to System.currentTimeMillis()
+                ))
+                counter++
+                handler.postDelayed(this, 1000)
+            }
+        }
+        handler.post(runnable!!)
+    }
+
+    fun stopCounter() {
+        runnable?.let { handler.removeCallbacks(it) }
+        runnable = null
+        counter = 0
+    }
 }
 ```
 
-#### 2. Register in MainActivity
+**iOS (Swift)**
+
+```swift
+// iOS: DeviceService.swift & CounterService.swift
+import Foundation
+import UIKit
+
+class DeviceService: NSObject {
+    // Method (MethodChannel)
+    @objc func getDeviceModel() -> String {
+        return UIDevice.current.model
+    }
+
+    @objc func getBatteryLevel() -> Int {
+        return Int(UIDevice.current.batteryLevel * 100)
+    }
+}
+
+class CounterService: NSObject {
+    private var timer: Timer?
+    private var counter = 0
+    private var activeSink: StreamSink?
+
+    // Stream (EventChannel)
+    @objc func counterUpdatesWithSink(_ sink: StreamSink) {
+        activeSink = sink
+        counter = 0
+
+        DispatchQueue.main.async { [weak self] in
+            self?.timer = Timer.scheduledTimer(
+                withTimeInterval: 1.0,
+                repeats: true
+            ) { [weak self] _ in
+                guard let self = self else { return }
+                self.activeSink?.success([
+                    "count": self.counter,
+                    "timestamp": Date().timeIntervalSince1970 * 1000
+                ])
+                self.counter += 1
+            }
+        }
+    }
+
+    @objc func stopCounter() {
+        timer?.invalidate()
+        timer = nil
+        activeSink = nil
+    }
+}
+```
+
+### 2. Register Native Classes
+
+**Android (Kotlin)**
 
 ```kotlin
+// Android: MainActivity.kt
 import io.nativebridge.FlutterNativeBridge
 
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        FlutterNativeBridge.register(this)  // One line does it all!
+        // Auto-discovers all @NativeBridge classes
+        FlutterNativeBridge.register(this)
     }
 }
 ```
 
-### iOS (Swift)
-
-#### 1. Create Your Swift Classes
+**iOS (Swift)**
 
 ```swift
-import Foundation
-
-// Inherit from NSObject and use @objc to expose methods
-class DeviceService: NSObject {
-    @objc func getModel() -> String {
-        return UIDevice.current.model
-    }
-
-    @objc func getVersion() -> String {
-        return UIDevice.current.systemVersion
-    }
-}
-```
-
-#### 2. Register in AppDelegate
-
-```swift
+// iOS: AppDelegate.swift
 import flutter_native_bridge
 
-@UIApplicationMain
+@main
 @objc class AppDelegate: FlutterAppDelegate {
     override func application(
         _ application: UIApplication,
@@ -90,58 +157,99 @@ import flutter_native_bridge
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
 
-        // Register your native classes
+        // Register each service
         FlutterNativeBridge.register(DeviceService())
+        FlutterNativeBridge.register(CounterService())
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
 }
 ```
 
-### Generate Dart Code
+### 3. Generate Dart Code
 
 ```bash
 dart run flutter_native_bridge:generate
 ```
 
-This scans both Android and iOS source files and creates `lib/native_bridge.g.dart`.
+This creates `lib/native_bridge.g.dart` with type-safe Dart classes.
 
-### Use in Dart
+### 4. Use in Dart
+
+**Dart (Flutter)**
 
 ```dart
+// Dart: lib/main.dart
+// Type-safe calls with full IDE autocomplete support!
 import 'native_bridge.g.dart';
 
-// Type-safe calls with autocomplete - works on both platforms!
-final model = await DeviceService.getModel();
-final version = await DeviceService.getVersion();
+// MethodChannel - Request/Response (Future<T>)
+final model = await DeviceService.getDeviceModel();
+final battery = await DeviceService.getBatteryLevel();
+
+// EventChannel - Streams (Stream<T>)
+StreamSubscription? subscription;
+
+void startListening() {
+  subscription = CounterService.counterUpdates().listen((data) {
+    if (data is Map) {
+      print('Count: ${data['count']}');
+    }
+  });
+}
+
+void stopListening() {
+  subscription?.cancel();
+  CounterService.stopCounter();
+}
 ```
 
-## Platform Comparison
+## Platform Reference
 
-| Feature | Android | iOS |
-|---------|---------|-----|
-| Class annotation | `@NativeBridge` | Inherit `NSObject` |
-| Method annotation | `@NativeFunction` | `@objc` |
-| Exclude method | `@NativeIgnore` | Don't add `@objc` |
-| Registration | `FlutterNativeBridge.register(this)` | `FlutterNativeBridge.register(obj)` |
+### Annotations & Requirements
 
-## Android Annotations
+| Feature | Android (Kotlin) | iOS (Swift) |
+|---------|------------------|-------------|
+| **Class Setup** | `@NativeBridge` on class | Inherit from `NSObject` |
+| **Expose Method** | Automatic (public methods) | Add `@objc` to method |
+| **Expose Single Method** | `@NativeFunction` | Add `@objc` to method |
+| **Exclude Method** | `@NativeIgnore` | Don't add `@objc` |
+| **Stream Method** | `@NativeStream` + `StreamSink` param | `@objc` + `StreamSink` param |
+| **Registration** | `FlutterNativeBridge.register(this)` | `FlutterNativeBridge.register(obj)` |
+
+### Android Annotations
 
 | Annotation | Target | Description |
 |------------|--------|-------------|
 | `@NativeBridge` | Class | Exposes all public methods to Flutter |
-| `@NativeFunction` | Method | Exposes a single method to Flutter |
-| `@NativeIgnore` | Method | Excludes a method (use with `@NativeBridge`) |
+| `@NativeFunction` | Method | Exposes a single method (use without `@NativeBridge`) |
+| `@NativeIgnore` | Method | Excludes a method from Flutter access |
+| `@NativeStream` | Method | Marks method as EventChannel stream |
 
-## iOS Requirements
+### iOS Requirements
 
 - Classes must inherit from `NSObject`
 - Methods must be marked with `@objc`
+- Stream methods must have `StreamSink` parameter with selector ending in `WithSink:`
 - Return types must be Objective-C compatible
 
-## Auto-Discovery (Android)
+## Supported Types
 
-When you call `FlutterNativeBridge.register(this)` on Android, the plugin automatically:
+| Kotlin | Swift | Dart |
+|--------|-------|------|
+| `String` | `String` | `String` |
+| `Int` | `Int` | `int` |
+| `Long` | `Int64` | `int` |
+| `Double` | `Double` | `double` |
+| `Float` | `Float` | `double` |
+| `Boolean` | `Bool` | `bool` |
+| `Unit` | `Void` | `void` |
+| `List<T>` | `[T]` | `List<T>` |
+| `Map<K, V>` | `[K: V]` | `Map<K, V>` |
+
+## Auto-Discovery (Android Only)
+
+When you call `FlutterNativeBridge.register(this)`, the plugin automatically:
 
 1. Registers the activity if it has `@NativeFunction` methods
 2. Scans your package for classes with `@NativeBridge` or `@NativeFunction`
@@ -150,144 +258,150 @@ When you call `FlutterNativeBridge.register(this)` on Android, the plugin automa
    - `Context` parameter
    - No-arg constructor
 
-## Runtime API (Without Code Generation)
+## Runtime API
 
-You can also call methods at runtime without generating code:
+Call native methods without code generation:
 
 ```dart
 import 'package:flutter_native_bridge/flutter_native_bridge.dart';
 
-// Direct call
-final model = await FlutterNativeBridge.call<String>('DeviceService', 'getModel');
+// Methods (MethodChannel)
+final model = await FlutterNativeBridge.call<String>('DeviceService', 'getDeviceModel');
 
-// Using bridge instance
-final device = NativeBridge('DeviceService');
-final model = await device.call<String>('getModel');
+// Streams (EventChannel)
+FlutterNativeBridge.stream<Map>('CounterService', 'counterUpdates').listen((data) {
+  print('Count: ${data['count']}');
+});
 
-// Discover registered classes
+// Discovery
 final classes = await FlutterNativeBridge.discover();
-// {'DeviceService': ['getModel', 'getVersion']}
+final streams = await FlutterNativeBridge.discoverStreams();
 ```
-
-## Supported Types
-
-| Kotlin Type | Swift Type | Dart Type |
-|-------------|------------|-----------|
-| `String` | `String` | `String` |
-| `Int` | `Int` | `int` |
-| `Long` | `Int64` | `int` |
-| `Double` | `Double` | `double` |
-| `Float` | `Float` | `double` |
-| `Boolean` | `Bool` | `bool` |
-| `List<T>` | `[T]` | `List<T>` |
-| `Map<K, V>` | `[K: V]` | `Map<K, V>` |
 
 ## Complete Example
 
-### Android (Kotlin)
+See the [example](example/) directory for a full working implementation.
+
+**Android (Kotlin)**
 
 ```kotlin
 // android/app/src/main/kotlin/.../MainActivity.kt
-package com.example.myapp
-
-import io.nativebridge.FlutterNativeBridge
-import io.nativebridge.NativeBridge
-import io.nativebridge.NativeFunction
-
-@NativeBridge
-class DeviceService {
-    fun getDeviceModel(): String = Build.MODEL
-    fun getAndroidVersion(): Int = Build.VERSION.SDK_INT
-}
+import io.nativebridge.*
 
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        FlutterNativeBridge.register(this)
+        FlutterNativeBridge.register(this)  // Auto-discovers all @NativeBridge classes
     }
+}
 
-    @NativeFunction
-    fun greet(name: String): String = "Hello, $name from Android!"
+@NativeBridge
+class DeviceService {
+    fun getDeviceModel(): String = Build.MODEL
+    fun getBatteryLevel(): Int = // ...
+}
+
+@NativeBridge
+class CounterService {
+    @NativeStream
+    fun counterUpdates(sink: StreamSink) {
+        // Emit events: sink.success(mapOf("count" to counter))
+    }
+    fun stopCounter() { /* cleanup */ }
 }
 ```
 
-### iOS (Swift)
+**iOS (Swift)**
 
 ```swift
-// ios/Runner/DeviceService.swift
-import Foundation
-import UIKit
-
-class DeviceService: NSObject {
-    @objc func getDeviceModel() -> String {
-        return UIDevice.current.model
-    }
-
-    @objc func getIOSVersion() -> String {
-        return UIDevice.current.systemVersion
-    }
-}
-
 // ios/Runner/AppDelegate.swift
 import flutter_native_bridge
 
-@UIApplicationMain
+@main
 @objc class AppDelegate: FlutterAppDelegate {
-    override func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-    ) -> Bool {
+    override func application(...) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
         FlutterNativeBridge.register(DeviceService())
-        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+        FlutterNativeBridge.register(CounterService())
+        return super.application(...)
     }
+}
+
+// ios/Runner/Services.swift
+class DeviceService: NSObject {
+    @objc func getDeviceModel() -> String { UIDevice.current.model }
+    @objc func getBatteryLevel() -> Int { /* ... */ }
+}
+
+class CounterService: NSObject {
+    @objc func counterUpdatesWithSink(_ sink: StreamSink) {
+        // Emit events: sink.success(["count": counter])
+    }
+    @objc func stopCounter() { /* cleanup */ }
 }
 ```
 
-### Dart
+**Dart (Flutter)**
 
 ```dart
 // lib/main.dart
 import 'native_bridge.g.dart';
 
-void main() async {
-  final model = await DeviceService.getDeviceModel();
-  print('Device: $model');
-}
+// MethodChannel - Request/Response (Future<T>)
+final model = await DeviceService.getDeviceModel();
+final battery = await DeviceService.getBatteryLevel();
+
+// EventChannel - Streams (Stream<T>)
+final subscription = CounterService.counterUpdates().listen((data) {
+  print('Count: ${data['count']}');
+});
+
+// Stop stream
+subscription.cancel();
+CounterService.stopCounter();
 ```
 
 ## Troubleshooting
 
-### Android: Auto-discovery not working?
+### Method not found?
+
+**Android:**
+- Ensure method is `public` (not `private` or `internal`)
+- For non-`@NativeBridge` classes, add `@NativeFunction` annotation
+- Check method is not annotated with `@NativeIgnore`
+
+**iOS:**
+- Ensure class inherits from `NSObject`
+- Ensure method is marked with `@objc`
+- Check return type is Objective-C compatible
+
+### Stream not working?
+
+**Android:**
+- Add `@NativeStream` annotation to the method
+- Method must have `StreamSink` as parameter
+
+**iOS:**
+- Method selector must end with `WithSink:` (e.g., `counterUpdatesWithSink:`)
+- Parameter must be of type `StreamSink`
+
+### Auto-discovery not working? (Android)
 
 Use manual registration:
 ```kotlin
-FlutterNativeBridge.registerObjects(DeviceService(), OtherService())
+FlutterNativeBridge.registerObjects(DeviceService(), CounterService())
 ```
-
-### Android: Method not found?
-
-Ensure the method is:
-- Public (not `private` or `internal`)
-- Annotated with `@NativeFunction` (if class doesn't have `@NativeBridge`)
-- Not annotated with `@NativeIgnore`
-
-### iOS: Method not found?
-
-Ensure:
-- Class inherits from `NSObject`
-- Method is marked with `@objc`
-- Return type is Objective-C compatible
 
 ### Name conflicts?
 
-If you have classes with the same name on both platforms or from different packages:
+Register with custom names:
 ```kotlin
 // Android
-FlutterNativeBridge.register("AndroidDevice", DeviceService())
-
+FlutterNativeBridge.register("MyDevice", DeviceService())
+```
+```swift
 // iOS
-FlutterNativeBridge.register(name: "iOSDevice", object: DeviceService())
+FlutterNativeBridge.register(name: "MyDevice", object: DeviceService())
 ```
 
 ## License
