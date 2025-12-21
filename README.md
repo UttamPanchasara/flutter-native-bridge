@@ -21,7 +21,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_native_bridge: ^1.0.0
+  flutter_native_bridge: ^1.1.0
 ```
 
 ## Quick Start
