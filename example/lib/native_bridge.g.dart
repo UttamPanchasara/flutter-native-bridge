@@ -35,6 +35,11 @@ class DeviceService {
   static Future<String?> getDeviceName() async {
     return _channel.invokeMethod<String>('DeviceService.getDeviceName');
   }
+
+  /// Calls native DeviceService.greetWithName
+  static Future<String?> greetWithName(String name) async {
+    return _channel.invokeMethod<String>('DeviceService.greetWithName', name);
+  }
 }
 
 /// Generated bridge for BatteryService

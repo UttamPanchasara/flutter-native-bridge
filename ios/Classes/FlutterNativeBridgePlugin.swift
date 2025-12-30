@@ -5,6 +5,7 @@ import UIKit
 ///
 /// Bridges Flutter and native iOS code using Objective-C runtime.
 /// Supports both MethodChannel (request-response) and EventChannel (streams).
+@objc(FlutterNativeBridgePlugin)
 public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
     private static var registeredObjects: [String: AnyObject] = [:]
@@ -12,10 +13,10 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
     // Track active event channels and their sinks
     private static var activeEventChannels: [String: FlutterEventChannel] = [:]
-    private static var activeStreamSinks: [String: EventSinkWrapper] = [:]
+    static var activeStreamSinks: [String: EventSinkWrapper] = [:]
     private static var streamHandlers: [String: StreamHandler] = [:]
 
-    private static let eventChannelPrefix = "flutter_native_bridge/events/"
+    static let eventChannelPrefix = "flutter_native_bridge/events/"
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         self.registrar = registrar
@@ -164,6 +165,8 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
 
         if let error = returnValue as? FlutterError {
             result(error)
+        } else if returnValue == nil || returnValue is NSNull {
+            result(nil)
         } else {
             result(returnValue)
         }
@@ -180,7 +183,6 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
                 return performSelector(target: target, selector: selector, arguments: arguments)
             }
         }
-
         return FlutterError(
             code: "NOT_FOUND",
             message: "Method '\(methodName)' not found. Make sure it's marked with @objc",
@@ -223,6 +225,26 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
     }
 
     private func performSelector(target: AnyObject, selector: Selector, arguments: Any?) -> Any? {
+        // Get method return type to handle primitives correctly
+        guard let method = class_getInstanceMethod(type(of: target), selector) else {
+            return nil
+        }
+
+        let returnType = method_copyReturnType(method)
+        let fullReturnType = String(cString: returnType)
+        free(returnType)
+
+        // Get just the first character which is the actual type encoding
+        let returnTypeString = String(fullReturnType.prefix(1))
+
+        // Type encodings: v=void, @=object, c/B=bool, i/s/l/q=int, f/d=float/double
+
+        // Handle void and primitive return types with IMP-based calling
+        if returnTypeString != "@" {
+            return performPrimitiveSelector(target: target, selector: selector, returnType: returnTypeString, arguments: arguments)
+        }
+
+        // Object return type - safe to use perform/takeUnretainedValue
         if arguments == nil {
             let result = target.perform(selector)
             return unwrapResult(result?.takeUnretainedValue())
@@ -237,6 +259,49 @@ public class FlutterNativeBridgePlugin: NSObject, FlutterPlugin {
         // Pass arguments directly
         let result = target.perform(selector, with: arguments)
         return unwrapResult(result?.takeUnretainedValue())
+    }
+
+    private func performPrimitiveSelector(target: AnyObject, selector: Selector, returnType: String, arguments: Any?) -> Any? {
+        // Get IMP for direct calling
+        guard let imp = class_getMethodImplementation(type(of: target), selector) else {
+            return nil
+        }
+
+        switch returnType {
+        case "v": // void
+            typealias VoidIMP = @convention(c) (AnyObject, Selector) -> Void
+            let fn = unsafeBitCast(imp, to: VoidIMP.self)
+            fn(target, selector)
+            return nil
+
+        case "c", "B": // char/Bool
+            typealias BoolIMP = @convention(c) (AnyObject, Selector) -> Bool
+            let fn = unsafeBitCast(imp, to: BoolIMP.self)
+            return fn(target, selector)
+
+        case "i", "s", "l", "q": // signed int types
+            typealias IntIMP = @convention(c) (AnyObject, Selector) -> Int
+            let fn = unsafeBitCast(imp, to: IntIMP.self)
+            return fn(target, selector)
+
+        case "I", "S", "L", "Q": // unsigned int types
+            typealias UIntIMP = @convention(c) (AnyObject, Selector) -> UInt
+            let fn = unsafeBitCast(imp, to: UIntIMP.self)
+            return Int(fn(target, selector))
+
+        case "f": // float
+            typealias FloatIMP = @convention(c) (AnyObject, Selector) -> Float
+            let fn = unsafeBitCast(imp, to: FloatIMP.self)
+            return Double(fn(target, selector))
+
+        case "d": // double
+            typealias DoubleIMP = @convention(c) (AnyObject, Selector) -> Double
+            let fn = unsafeBitCast(imp, to: DoubleIMP.self)
+            return fn(target, selector)
+
+        default:
+            return nil
+        }
     }
 
     private func unwrapResult(_ value: Any?) -> Any? {
@@ -435,7 +500,6 @@ private class StreamHandler: NSObject, FlutterStreamHandler {
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         let channelName = "\(FlutterNativeBridgePlugin.eventChannelPrefix)\(className).\(methodName)"
         FlutterNativeBridgePlugin.activeStreamSinks.removeValue(forKey: channelName)
-        NSLog("FlutterNativeBridge: Stream cancelled: \(channelName)")
         return nil
     }
 }

@@ -17,6 +17,10 @@ class DeviceService: NSObject {
         return UIDevice.current.name
     }
 
+    @objc func greetWithName(_ name: String) -> String {
+        return "Hello, \(name)! Greetings from iOS!"
+    }
+
     // This method is NOT exposed (no @objc)
     func internalMethod() -> String {
         return "Not accessible from Flutter"

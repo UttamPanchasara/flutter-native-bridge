@@ -24,7 +24,7 @@ abstract class NativeCallable {
   List<NativeParam> get params;
 }
 
-/// Represents a native method that returns Future<T>.
+/// Represents a native method that returns `Future<T>`.
 class NativeMethod implements NativeCallable {
   @override
   final String name;
@@ -36,7 +36,7 @@ class NativeMethod implements NativeCallable {
   NativeMethod(this.name, this.returnType, this.params);
 }
 
-/// Represents a native stream that returns Stream<T>.
+/// Represents a native stream that returns `Stream<T>`.
 class NativeStream implements NativeCallable {
   @override
   final String name;

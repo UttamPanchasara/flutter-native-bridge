@@ -86,9 +86,10 @@ class _MyAppState extends State<MyApp> {
       } else if (Platform.isIOS) {
         final version = await DeviceService.getIOSVersion();
         final deviceName = await DeviceService.getDeviceName();
+        final greeting = await DeviceService.greetWithName('Flutter');
         deviceInfo = '$model - $deviceName (iOS $version)';
         setState(() {
-          _greeting = 'Hello from iOS!';
+          _greeting = greeting ?? '';
         });
       } else {
         deviceInfo = model ?? 'Unknown';

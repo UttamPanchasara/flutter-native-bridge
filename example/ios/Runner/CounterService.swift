@@ -1,4 +1,5 @@
 import Foundation
+import flutter_native_bridge
 
 /// Example service demonstrating stream support for EventChannel.
 /// Emits counter values every second.

@@ -38,7 +38,7 @@ import Foundation
     /// Register multiple objects at once.
     ///
     /// - Parameter objects: Objects to register
-    @objc public static func registerObjects(_ objects: AnyObject...) {
+    @objc public static func registerObjects(_ objects: [AnyObject]) {
         for object in objects {
             FlutterNativeBridgePlugin.registerObject(object)
         }

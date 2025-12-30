@@ -34,7 +34,7 @@
 /// final model = await DeviceService.getModel();
 /// DeviceService.sensorUpdates().listen((data) => print(data));
 /// ```
-library flutter_native_bridge;
+library;
 
 import 'package:flutter/services.dart';
 
