@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2025-12-30
+
+### Fixed
+- **iOS Swift Compilation Errors** ([#1](https://github.com/UttamPanchasara/flutter-native-bridge/issues/1))
+  - Fixed `@objc` variadic parameter error by changing `AnyObject...` to `[AnyObject]`
+  - Fixed access control issues with `activeStreamSinks` and `eventChannelPrefix`
+  - Made plugin Swift-only to resolve module generation issues
+  - Fixed `EXC_BAD_ACCESS` crash when calling methods with primitive return types (Int, Bool, Double, etc.)
+  - Fixed crash when calling void methods by using IMP-based direct method invocation
+  - Properly handle Objective-C type encodings for all return types
+
+### Changed
+- Cleaned up debug logging in iOS plugin for production release
+- Fixed lint warnings in Dart code (doc comments, library directive)
+
 ## [1.1.0] - 2025-12-21
 
 ### Added
